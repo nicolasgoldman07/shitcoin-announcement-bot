@@ -41,9 +41,11 @@ class TelegramHandler(logging.Handler):
         if not config["TELEGRAM"]["NOTIFICATIONS"][key]:
             return
 
-        requests.get(
-            f"""https://api.telegram.org/bot{bot_token}/sendMessage
-            ?chat_id={bot_chatID}
-            &parse_mode=Markdown
-            &text={record.message}"""
+        request_url = (
+            f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            f"?chat_id={bot_chatID}"
+            f"&parse_mode=Markdown"
+            f"&text={record.message}"
         )
+
+        requests.get(request_url)
