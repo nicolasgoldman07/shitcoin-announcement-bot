@@ -9,6 +9,10 @@ import time
 import requests
 from gate_api import ApiClient
 from gate_api import SpotApi
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 
 import gateio_new_coins_announcements_bot.globals as globals
 from gateio_new_coins_announcements_bot.auth.gateio_auth import load_gateio_creds
@@ -25,31 +29,45 @@ supported_currencies = None
 previously_found_coins = set()
 
 
-def get_announcement():
+def get_binance_announcement():
     """
     Retrieves new coin listing announcements
 
     """
-    logger.debug("Pulling announcement page")
-    # Generate random query/params to help prevent caching
-    rand_page_size = random.randint(1, 200)
-    letters = string.ascii_letters
-    random_string = "".join(random.choice(letters) for i in range(random.randint(10, 20)))
+    logger.info("BINANCE - Pulling announcement page")
+
     random_number = random.randint(1, 99999999999999999999)
-    queries = [
-        "type=1",
-        "catalogId=48",
-        "pageNo=1",
-        f"pageSize={str(rand_page_size)}",
-        f"rnd={str(time.time())}",
-        f"{random_string}={str(random_number)}",
-    ]
-    random.shuffle(queries)
-    logger.debug(f"Queries: {queries}")
+    random_string = "".join(random.choice(string.ascii_letters) for i in range(random.randint(10, 20)))
     request_url = (
-        f"https://www.binance.com/gateway-api/v1/public/cms/article/list/query"
-        f"?{queries[0]}&{queries[1]}&{queries[2]}&{queries[3]}&{queries[4]}&{queries[5]}"
+        f"https://www.binance.com/en/support/announcement/new-cryptocurrency-listing?c=48"
+        f"&rnd={random_number}"
+        f"&{random_string}={random_number}"
     )
+
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver.get(request_url)
+    # TODO: Replace this with a more sophisticated wait
+    time.sleep(5)
+
+    listings = []
+    try:
+        articles = driver.find_elements(By.CSS_SELECTOR, "div.css-1yxx6id")
+        for article in articles:
+            title = article.text.strip()
+            if title:
+                listings.append({"title": title})
+
+    finally:
+        driver.quit()
+
+    # filter the listings by to find the first one with "Will List"
+    listings = [listing for listing in listings if "Will List" in listing["title"]]
+    return listings[0]["title"]
 
     latest_announcement = requests.get(request_url)
     if latest_announcement.status_code == 200:
@@ -72,26 +90,26 @@ def get_kucoin_announcement():
     Retrieves new coin listing announcements from Kucoin
 
     """
-    logger.debug("Pulling announcement page")
+    logger.info("KUCOIN - Pulling announcement page")
     # Generate random query/params to help prevent caching
-    rand_page_size = random.randint(1, 200)
+    rand_page_size = random.randint(5, 10)
     letters = string.ascii_letters
     random_string = "".join(random.choice(letters) for i in range(random.randint(10, 20)))
     random_number = random.randint(1, 99999999999999999999)
     queries = [
         "page=1",
         f"pageSize={str(rand_page_size)}",
-        "category=listing",
+        "annType=new-listings",
         "lang=en_US",
         f"rnd={str(time.time())}",
         f"{random_string}={str(random_number)}",
     ]
     random.shuffle(queries)
-    logger.debug(f"Queries: {queries}")
     request_url = (
-        f"https://www.kucoin.com/_api/cms/articles?"
+        f"https://api.kucoin.com/api/v3/announcements?"
         f"?{queries[0]}&{queries[1]}&{queries[2]}&{queries[3]}&{queries[4]}&{queries[5]}"
     )
+
     latest_announcement = requests.get(request_url)
     if latest_announcement.status_code == 200:
         try:
@@ -101,60 +119,97 @@ def get_kucoin_announcement():
             pass
 
         latest_announcement = latest_announcement.json()
-        logger.debug("Finished pulling announcement page")
-        return latest_announcement["items"][0]["title"]
+        filtered_announcements = list(
+            filter(
+                lambda announcement: set(announcement["annType"]) == {"latest-announcements", "new-listings"},
+                latest_announcement["data"]["items"],
+            )
+        )
+
+        if latest_announcement is None:
+            logger.error("No announcements found")
+
+        logger.info("Finished pulling announcement page")
+        return filtered_announcements[0]["annTitle"]
     else:
         logger.error(f"Error pulling kucoin announcement page: {latest_announcement.status_code}")
         return ""
 
 
+def get_binance_coin():
+    """
+    Checks for new Binance coin listings.
+    Returns the new symbol if found, otherwise None.
+    """
+    if not config["TRADE_OPTIONS"]["BINANCE_ANNOUNCEMENTS"]:
+        return None
+
+    logger.info("Binance announcements enabled, looking for new Binance coins...")
+    binance_announcement = get_binance_announcement()
+
+    binance_coin = re.findall(r"\(([^)]+)", binance_announcement)
+
+    if (
+        "Will List" in binance_announcement
+        and binance_coin
+        and binance_coin[0] != globals.latest_listing
+        and binance_coin[0] not in previously_found_coins
+    ):
+        # TODO: Add support of getting multi-coin announcements at the same time
+        # TODO: Improve logic of always getting the first announcement coin
+        coin = binance_coin[0]
+        previously_found_coins.add(coin)
+        logger.info(f"New previously found coins: {previously_found_coins}")
+        logger.info(f"New Binance coin detected: {coin}")
+        return coin
+
+    return None
+
+
+def get_kucoin_coin():
+    """
+    Checks for new Kucoin coin listings.
+    Returns the new symbol if found, otherwise None.
+    """
+    if not config["TRADE_OPTIONS"]["KUCOIN_ANNOUNCEMENTS"]:
+        return None
+
+    # logger.info("Kucoin announcements enabled, looking for new Kucoin coins...")
+    kucoin_announcement = get_kucoin_announcement()
+    kucoin_coin = re.findall(r"\(([^)]+)", kucoin_announcement)
+
+    if (
+        "Gets Listed" in kucoin_announcement
+        and kucoin_coin
+        and kucoin_coin[0] != globals.latest_listing
+        and kucoin_coin[0] not in previously_found_coins
+    ):
+        # TODO: Add support of getting multi-coin announcements at the same time
+        # TODO: Improve logic of always getting the first announcement coin
+        coin = kucoin_coin[0]
+        previously_found_coins.add(coin)
+        logger.info(f"New previously found coins: {previously_found_coins}")
+        logger.info(f"New Kucoin coin detected: {coin}")
+        return coin
+
+    return None
+
+
+# TODO: Add support of getting multi-exchange announcements at the same time
 def get_last_coin():
     """
-    Returns new Symbol when appropriate
+    Checks both Binance and Kucoin for new coin listings and returns the first found.
+    Prioritizes Binance announcements over Kucoin.
     """
-    # scan Binance Announcement
-    latest_announcement = get_announcement()
+    binance_coin = get_binance_coin()
+    if binance_coin:
+        return binance_coin
 
-    # enable Kucoin Announcements if True in config
-    if config["TRADE_OPTIONS"]["KUCOIN_ANNOUNCEMENTS"]:
-        logger.info("Kucoin announcements enabled, look for new Kucoin coins...")
-        kucoin_announcement = get_kucoin_announcement()
-        kucoin_coin = re.findall(r"\(([^)]+)", kucoin_announcement)
+    kucoin_coin = get_kucoin_coin()
+    if kucoin_coin:
+        return kucoin_coin
 
-    found_coin = re.findall(r"\(([^)]+)", latest_announcement)
-    uppers = None
-
-    # returns nothing if it's an old coin or it's not an actual coin listing
-    if (
-        "Will List" not in latest_announcement
-        or found_coin[0] == globals.latest_listing
-        or found_coin[0] in previously_found_coins
-    ):
-
-        # if the latest Binance announcement is not a new coin listing,
-        # or the listing has already been returned, check kucoin
-        if (
-            config["TRADE_OPTIONS"]["KUCOIN_ANNOUNCEMENTS"]
-            and "Gets Listed" in kucoin_announcement
-            and kucoin_coin[0] != globals.latest_listing
-            and kucoin_coin[0] not in previously_found_coins
-        ):
-            if len(kucoin_coin) == 1:
-                uppers = kucoin_coin[0]
-                previously_found_coins.add(uppers)
-                logger.info("New Kucoin coin detected: " + uppers)
-            if len(kucoin_coin) != 1:
-                uppers = None
-
-    else:
-        if len(found_coin) == 1:
-            uppers = found_coin[0]
-            previously_found_coins.add(uppers)
-            logger.info("New coin detected: " + uppers)
-        if len(found_coin) != 1:
-            uppers = None
-
-    return uppers
+    return None
 
 
 def store_new_listing(listing):
@@ -224,7 +279,7 @@ def load_old_coins():
     if os.path.isfile("old_coins.json"):
         with open("old_coins.json") as json_file:
             data = json.load(json_file)
-            logger.debug("Loaded old_coins from file")
+            logger.info("Loaded old_coins from file")
             return data
     else:
         return []
@@ -233,4 +288,4 @@ def load_old_coins():
 def store_old_coins(old_coin_list):
     with open("old_coins.json", "w") as f:
         json.dump(old_coin_list, f, indent=2)
-        logger.debug("Wrote old_coins to file")
+        logger.info("Wrote old_coins to file")
