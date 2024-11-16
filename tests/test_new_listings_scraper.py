@@ -10,6 +10,6 @@ import pytest
 
 @pytest.mark.skip("Can only be executed locally at this moment")
 def test_latest_announcement():
-    from gateio_new_coins_announcements_bot.new_listings_scraper import get_announcement
+    from gateio_new_coins_announcements_bot.new_listings_scraper import get_binance_announcement
 
-    assert get_announcement()
+    assert get_binance_announcement()
