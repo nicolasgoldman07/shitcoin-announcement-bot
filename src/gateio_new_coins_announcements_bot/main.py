@@ -1,4 +1,5 @@
 import copy
+import json
 import os.path
 import threading
 import time
@@ -8,7 +9,6 @@ import gateio_new_coins_announcements_bot.globals as globals
 from gateio_new_coins_announcements_bot.load_config import load_config
 from gateio_new_coins_announcements_bot.logger import logger
 from gateio_new_coins_announcements_bot.new_listings_scraper import get_all_currencies
-from gateio_new_coins_announcements_bot.new_listings_scraper import get_last_coin
 from gateio_new_coins_announcements_bot.new_listings_scraper import load_old_coins
 from gateio_new_coins_announcements_bot.new_listings_scraper import search_and_update
 from gateio_new_coins_announcements_bot.new_listings_scraper import store_old_coins
@@ -16,6 +16,8 @@ from gateio_new_coins_announcements_bot.store_order import load_order
 from gateio_new_coins_announcements_bot.store_order import store_order
 from gateio_new_coins_announcements_bot.trade_client import get_last_price
 from gateio_new_coins_announcements_bot.trade_client import place_order
+
+# from gateio_new_coins_announcements_bot.new_listings_scraper import get_last_coin
 
 # To add a coin to ignore, add it to the json array in old_coins.json
 globals.old_coins = load_old_coins()
@@ -50,15 +52,20 @@ logger.debug("Finished get_all_currencies")
 logger.info("new-coin-bot online", extra={"TELEGRAM": "STARTUP"})
 
 
+# TODO: move all this logic to a new module
 def buy():
     while not globals.stop_threads:
-        logger.debug("Waiting for buy_ready event")
+        logger.info("⌛⌛⌛⌛⌛⌛ Waiting for buy_ready event ⌛⌛⌛⌛⌛⌛")
         globals.buy_ready.wait()
-        logger.debug("buy_ready event triggered")
+        logger.info("💸💸💸💸💸💸 buy_ready event triggered 💸💸💸💸💸💸")
         if globals.stop_threads:
             break
         announcement_coin = globals.latest_listing
 
+        logger.info(f"announcement_coin: {announcement_coin}")
+        logger.info(f"order: {order}")
+        logger.info(f"sold_coins: {sold_coins}")
+        logger.info(f"globals.old_coins: {globals.old_coins}")
         global supported_currencies
         if (
             announcement_coin
@@ -261,9 +268,9 @@ def buy():
 
 def sell():
     while not globals.stop_threads:
-        logger.debug("Waiting for sell_ready event")
+        logger.info("⌛⌛⌛⌛⌛⌛ Waiting for sell_ready event ⌛⌛⌛⌛⌛⌛")
         globals.sell_ready.wait()
-        logger.debug("sell_ready event triggered")
+        logger.info("💰💰💰💰💰💰 sell_ready event triggered 💰💰💰💰💰💰")
         if globals.stop_threads:
             break
         # check if the order file exists and load the current orders
@@ -466,9 +473,10 @@ def main():
     """
 
     # Protection from stale announcement
-    latest_coin = get_last_coin()
-    if latest_coin:
-        globals.latest_listing = latest_coin
+    # TODO: ADD THIS BACK AFTER THE ACTUAL FIX
+    # latest_coin = get_last_coin()
+    # if latest_coin:
+    #     globals.latest_listing = latest_coin
 
     # store config deets
     globals.quantity = config["TRADE_OPTIONS"]["QUANTITY"]
@@ -483,13 +491,18 @@ def main():
     globals.stop_threads = False
     globals.buy_ready.clear()
 
+    logger.debug("Globals initialized")
+    logger.debug(print_globals())
+
     if not globals.test_mode:
-        logger.info("!!! LIVE MODE !!!")
+        logger.info("🚀🚀🚀🚀🚀🚀 LIVE MODE 🚀🚀🚀🚀🚀🚀")
 
     t_get_currencies_thread = threading.Thread(target=get_all_currencies)
     t_get_currencies_thread.start()
+
     t_buy_thread = threading.Thread(target=buy)
     t_buy_thread.start()
+
     t_sell_thread = threading.Thread(target=sell)
     t_sell_thread.start()
 
@@ -509,3 +522,23 @@ if __name__ == "__main__":
     logger.info("started working...")
     main()
     logger.info("stopped working...")
+
+
+def print_globals():
+    def is_json_serializable(value):
+        try:
+            json.dumps(value)
+            return True
+        except (TypeError, OverflowError):
+            return False
+
+    print(
+        json.dumps(
+            {
+                key: value
+                for key, value in globals.__dict__.items()
+                if not key.startswith("__") and is_json_serializable(value)
+            },
+            indent=4,
+        )
+    )
